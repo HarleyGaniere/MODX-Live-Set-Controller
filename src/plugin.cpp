@@ -25,6 +25,9 @@
 #include <string>
 #include <vector>
 
+#ifndef MODX_SEND_ON_PRESET_LOAD
+#define MODX_SEND_ON_PRESET_LOAD 1
+#endif
 #ifndef MODX_SYSEX_WITH_FRAMING
 #define MODX_SYSEX_WITH_FRAMING 1
 #endif
@@ -60,7 +63,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "",
     "",
     "",
-    "1.1.0",
+    "1.1.1",
     "Selects Live Sets on a Yamaha MODX (SysEx + Bank/Program Change)",
     kPluginFeatures};
 
@@ -87,6 +90,9 @@ struct Plugin {
   std::atomic<int> v[P_COUNT];
   std::atomic<bool> pendingSend{false};
   std::atomic<bool> textDirty{false};
+  // True once process() has run since activation. A state load before that is a project
+  // load (stay silent); a state load after that is a preset change (send the select).
+  std::atomic<bool> hasProcessed{false};
 
   // Slot names from the .reabank files: names[library][page][slot]. Empty = use default.
   std::string names[kLibs][kPages][kSlots];
@@ -410,8 +416,18 @@ bool stateLoad(const clap_plugin_t* p, const clap_istream_t* stream) {
     left -= static_cast<size_t>(r);
   }
   if (b.version != 1) return false;
-  // Loading restores values only; it never sends anything to the MODX.
-  for (int i = 0; i < P_COUNT; ++i) s->v[i].store(std::clamp(static_cast<int>(b.values[i]), 0, kParamMax[i]));
+  bool selectChanged = false;
+  for (int i = 0; i < P_COUNT; ++i) {
+    const int nv = std::clamp(static_cast<int>(b.values[i]), 0, kParamMax[i]);
+    if (s->v[i].exchange(nv) != nv && i != P_CH) selectChanged = true;
+  }
+#if MODX_SEND_ON_PRESET_LOAD
+  // Preset change while the plugin is running -> tell the MODX, like moving the sliders in the JSFX.
+  // Loading a project (before processing has started) stays silent.
+  if (selectChanged && s->hasProcessed.load()) s->pendingSend.store(true);
+#else
+  (void)selectChanged;
+#endif
   s->textDirty.store(true);
   if (s->host && s->host->request_callback) s->host->request_callback(s->host);
   return true;
@@ -430,6 +446,7 @@ void pluginDestroy(const clap_plugin_t* p) { delete self(p); }
 
 bool pluginActivate(const clap_plugin_t* p, double, uint32_t, uint32_t) {
   Plugin* s = self(p);
+  s->hasProcessed.store(false);
   s->loadNames();  // pick up edited .reabank files each time the plugin is (re)activated
   if (s->hostParams) s->hostParams->rescan(s->host, CLAP_PARAM_RESCAN_TEXT);
   return true;
@@ -459,6 +476,7 @@ bool isPassThrough(const clap_event_header_t* h) {
 
 clap_process_status pluginProcess(const clap_plugin_t* p, const clap_process_t* proc) {
   Plugin* s = self(p);
+  s->hasProcessed.store(true);
   s->sysexUsed = 0;
   const clap_input_events_t* in = proc->in_events;
   const clap_output_events_t* out = proc->out_events;

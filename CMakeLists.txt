@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(MODX_LiveSet_Controller VERSION 1.1.0 LANGUAGES CXX)
+project(MODX_LiveSet_Controller VERSION 1.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,6 +12,7 @@ if(MSVC)
 endif()
 
 option(MODX_COPY_AFTER_BUILD "Copy the .clap into your user CLAP folder after building" OFF)
+option(MODX_SEND_ON_PRESET_LOAD "Send the Live Set select when a preset is loaded while running" ON)
 option(MODX_SYSEX_WITH_FRAMING "Send SysEx buffer including F0 ... F7 (see README)" ON)
 set(CLAP_SDK_DIR "" CACHE PATH "Path to a local clap SDK checkout (leave empty to download)")
 
@@ -31,6 +32,11 @@ endif()
 # ---- Plugin ----
 add_library(modx_liveset MODULE src/plugin.cpp)
 target_link_libraries(modx_liveset PRIVATE clap)
+if(MODX_SEND_ON_PRESET_LOAD)
+  target_compile_definitions(modx_liveset PRIVATE MODX_SEND_ON_PRESET_LOAD=1)
+else()
+  target_compile_definitions(modx_liveset PRIVATE MODX_SEND_ON_PRESET_LOAD=0)
+endif()
 if(MODX_SYSEX_WITH_FRAMING)
   target_compile_definitions(modx_liveset PRIVATE MODX_SYSEX_WITH_FRAMING=1)
 else()
